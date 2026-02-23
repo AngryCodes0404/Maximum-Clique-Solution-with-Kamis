@@ -1,123 +1,161 @@
 from collections import Counter
-from typing import List
+from typing import List, Sequence, Tuple
 
 import numpy as np
 from CliqueAI.graph.model import LambdaGraph
 
 
 class CliqueScoreCalculator:
-    def __init__(
-        self, graph: LambdaGraph, difficulty: float, responses: List[List[int]]
-    ):
-        """
-        Initializes the scoring calculator.
+    """Compute optimality and diversity scores for maximum clique responses."""
 
+    def __init__(
+        self,
+        graph: LambdaGraph,
+        difficulty: float,
+        responses: List[List[int]],
+    ) -> None:
+        """
         Args:
-        - graph (LambdaGraph): The graph to validate against.
-        - difficulty (float): The difficulty level for scoring.
-        - responses (List[List[int]]): List of node sets returned by miners.
+            graph: Graph used for clique validation.
+            difficulty: Difficulty multiplier for rewards.
+            responses: Node sets returned by miners.
         """
         self.graph = graph
         self.difficulty = difficulty
         self.responses = responses
 
-    def is_valid_maximum_clique(self, nodes: List[int]) -> bool:
+    # ------------------------------------------------------------------ #
+    # Validation
+    # ------------------------------------------------------------------ #
+
+    def is_valid_maximum_clique(self, nodes: Sequence[int]) -> bool:
         """
-        Returns True if the given nodes form a clique in the graph.
+        Return True if `nodes` form a valid maximum clique.
         """
-        node_set = set(nodes)
-        # 0. Check if the node set is empty
-        if len(node_set) == 0:
+        if not nodes:
             return False
 
-        # 1. Check for duplicates or out-of-range nodes
+        node_set = set(nodes)
+
+        # Duplicates check
         if len(node_set) != len(nodes):
             return False
+
+        # Range check
         if not node_set.issubset(range(self.graph.number_of_nodes)):
             return False
 
-        # 2. Check if all pairs of nodes are connected (i.e., form a clique)
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                if nodes[j] not in self.graph.adjacency_list[nodes[i]]:
+        # Clique check (all pairs connected)
+        for i, u in enumerate(nodes):
+            for v in nodes[i + 1 :]:
+                if v not in self.graph.adjacency_list[u]:
                     return False
 
-        # 3. Check if any other node can be added to form a larger clique
-        all_nodes = set(range(self.graph.number_of_nodes))
-        remaining_nodes = all_nodes - node_set
+        # Maximality check (cannot be extended)
+        remaining_nodes = set(range(self.graph.number_of_nodes)) - node_set
         for candidate in remaining_nodes:
-            # Candidate must be connected to all nodes in the current clique
             if node_set.issubset(self.graph.adjacency_list[candidate]):
-                return False  # Clique can be extended, so it's not maximum
+                return False
 
         return True
 
-    def optimality(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Calculate the optimality scores for each response.
-        """
-        val = np.array(
-            [
-                1 if self.is_valid_maximum_clique(response) else 0
-                for response in self.responses
-            ]
+    def _validity_mask(self) -> np.ndarray:
+        """Return a binary mask indicating valid maximum cliques."""
+        return np.array(
+            [self.is_valid_maximum_clique(r) for r in self.responses],
+            dtype=float,
         )
-        size = np.array([len(response) for response in self.responses]) * val
-        zeros = np.zeros(len(self.responses))
-        if len(size) == 0:
+
+    # ------------------------------------------------------------------ #
+    # Optimality
+    # ------------------------------------------------------------------ #
+
+    def optimality(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Compute optimality-related metrics.
+
+        Returns:
+            rel: Relative clique size
+            pr: Percentile rank
+            omega: Raw optimality score
+            omega_normalized: Normalized optimality score
+        """
+        n = len(self.responses)
+        if n == 0:
+            zeros = np.zeros(0)
             return zeros, zeros, zeros, zeros
 
-        max_size = np.max(size)
+        validity = self._validity_mask()
+        sizes = np.array([len(r) for r in self.responses], dtype=float) * validity
+
+        max_size = sizes.max(initial=0)
         if max_size <= 0:
+            zeros = np.zeros(n)
             return zeros, zeros, zeros, zeros
 
-        rel = size / max_size
-        pr = np.array([np.sum(size > size[i]) / len(size) for i in range(len(size))])
+        rel = sizes / max_size
+        pr = np.array([(sizes > sizes[i]).sum() / n for i in range(n)])
 
-        omega = np.zeros(len(self.responses))
-        for i, valid in enumerate(val):
-            if valid:
-                omega[i] = np.exp(-pr[i] / rel[i])
+        omega = np.zeros(n)
+        valid_indices = validity.astype(bool)
 
-        max_omega = np.max(omega)
-        if max_omega == 0:
-            return rel, pr, omega, omega
-        omega_normalized = omega / max_omega
+        omega[valid_indices] = np.exp(-pr[valid_indices] / rel[valid_indices])
+
+        max_omega = omega.max(initial=0)
+        omega_normalized = omega if max_omega == 0 else omega / max_omega
+
         return rel, pr, omega, omega_normalized
+
+    # ------------------------------------------------------------------ #
+    # Diversity
+    # ------------------------------------------------------------------ #
 
     def diversity(self) -> np.ndarray:
         """
-        Calculate the diversity scores for each response.
+        Compute normalized diversity scores.
         """
-        val = np.array(
-            [
-                1 if self.is_valid_maximum_clique(response) else 0
-                for response in self.responses
-            ]
+        n = len(self.responses)
+        if n == 0:
+            return np.zeros(0)
+
+        validity = self._validity_mask()
+
+        canonical = [tuple(sorted(r)) for r in self.responses]
+        counts = Counter(canonical)
+
+        uniqueness = np.array(
+            [1.0 / counts[sol] for sol in canonical],
+            dtype=float,
         )
 
-        canonical_responses = [tuple(sorted(r)) for r in self.responses]
-        counts = Counter(canonical_responses)
-        unq = np.array([1 / counts[sol] for sol in canonical_responses])
+        delta = validity * uniqueness
+        max_delta = delta.max(initial=0)
 
-        delta = val * unq
-        if len(delta) == 0:
-            return np.array([])
+        return delta if max_delta == 0 else delta / max_delta
 
-        max_delta = np.max(delta)
-        if max_delta == 0:
-            return delta
-        delta_normalized = delta / max_delta
-        return delta_normalized
+    # ------------------------------------------------------------------ #
+    # Final Scores
+    # ------------------------------------------------------------------ #
 
     def get_scores(
         self,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Compute normalized scores.
+        Compute final scoring components.
+
+        Returns:
+            rel: Relative size
+            pr: Percentile rank
+            omega: Raw optimality
+            optimality: Normalized optimality
+            diversity: Normalized diversity
+            rewards: Final reward score
         """
         rel, pr, omega, optimality = self.optimality()
         diversity = self.diversity()
 
-        rewards = optimality * (1 + self.difficulty) + diversity
+        rewards = optimality * (1.0 + self.difficulty) + diversity
+
         return rel, pr, omega, optimality, diversity, rewards
