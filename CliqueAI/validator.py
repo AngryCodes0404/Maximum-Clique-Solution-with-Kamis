@@ -149,9 +149,7 @@ class Validator(BaseValidatorNeuron):
         adj_matrix = graph_codec.list_to_matrix(
             graph.adjacency_list, graph.number_of_nodes
         )
-        encoded_matrix = graph_codec.encode_matrix(
-            adj_matrix
-        )
+        encoded_matrix = graph_codec.encode_matrix(adj_matrix)
 
         # Synapse
         synapse = MaximumCliqueOfLambdaGraph(
