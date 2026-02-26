@@ -48,5 +48,5 @@ def update_repo_if_needed() -> bool:
     except Exception as e:
         bt.logging.error(f"Error checking for updates: {e}")
         bt.logging.error(traceback.format_exc())
-        time.sleep(60) # sleep 1 min
+        time.sleep(60)  # sleep 1 min
         return True
