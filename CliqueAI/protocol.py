@@ -5,7 +5,6 @@ from pydantic import Field
 
 
 class MaximumCliqueOfLambdaGraph(bt.Synapse):
-    # The input to the miner.
     uuid: str = Field(
         title="uuid",
         description="The UUID of the synapse.",
@@ -32,7 +31,6 @@ class MaximumCliqueOfLambdaGraph(bt.Synapse):
         default="",
     )
 
-    # The output of the miner.
     maximum_clique: typing.List[int] = Field(
         title="maximum_clique",
         description="The maximum clique in the graph.",
